@@ -97,18 +97,8 @@ type TokenPlan struct {
 
 // planApplianceToken reads the state a mint would change and decides what to do.
 func (d *deps) planApplianceToken(ctx context.Context, client *api.Client, req Request) (*TokenPlan, error) {
-	// The key has to exist first, and it is created by the vault phase from the
-	// stage's committed region list. Failing here rather than creating one keeps
-	// git the source of truth for which appliances a stage can unseal.
-	name := vaultinit.ApplianceKeyName(req.Region)
-	key, err := client.Logical().ReadWithContext(ctx, "transit/keys/"+name)
-	if err != nil {
-		return nil, fmt.Errorf("read transit key %s: %w", name, err)
-	}
-	if key == nil {
-		return nil, fmt.Errorf(
-			"no transit key %s: add %q to appliance_regions in the stage's terraform.tfvars and merge, which creates the key and its policy",
-			name, req.Region)
+	if err := requireApplianceKey(ctx, client, req.Region); err != nil {
+		return nil, err
 	}
 
 	plan := &TokenPlan{
@@ -141,6 +131,25 @@ func (d *deps) planApplianceToken(ctx context.Context, client *api.Client, req R
 	}
 	plan.Action = decideTokenAction(plan.TokenLive, req.Reissue)
 	return plan, nil
+}
+
+// requireApplianceKey refuses a region the stage has not committed.
+//
+// The key is created by the vault phase from the stage's committed region list.
+// Failing here rather than creating one keeps git the source of truth for which
+// appliances a stage knows.
+func requireApplianceKey(ctx context.Context, client *api.Client, region string) error {
+	name := vaultinit.ApplianceKeyName(region)
+	key, err := client.Logical().ReadWithContext(ctx, "transit/keys/"+name)
+	if err != nil {
+		return fmt.Errorf("read transit key %s: %w", name, err)
+	}
+	if key == nil {
+		return fmt.Errorf(
+			"no transit key %s: add %q to appliance_regions in the stage's terraform.tfvars and merge, which creates the key and its policy",
+			name, region)
+	}
+	return nil
 }
 
 // validateTokenDurations refuses an unparseable period or wrap TTL while nothing
